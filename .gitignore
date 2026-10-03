@@ -1,0 +1,10 @@
+.DS_Store
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+uv.lock
+aegis/artifacts/

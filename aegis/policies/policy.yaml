@@ -1,0 +1,609 @@
+# Aegis — centralized policy. The ONLY configuration file of the control layer.
+#
+# Everything the gateway enforces lives here: controls and their actions, sensitivity
+# (adherence / strictness), allowed models, budgets and prices, privileged roles,
+# information-flow contracts, historical attack signatures and reporting.
+# Edit it live: the gateway hot-reloads it on the next request (mtime check). An invalid
+# edit is rejected and the last valid version stays active (see /health).
+#
+# Layout:
+#   active_profile / tenant_profiles  which profile governs which tenant
+#   model_prices, roles, reporting    shared by all profiles
+#   information_flow                  OpenAPPA tool contracts (sources / sinks)
+#   attack_signatures                 historical exploit signatures
+#   profiles                          permissive | balanced | strict
+
+version: "1.0"
+
+# Profile used by every tenant not listed in tenant_profiles.
+# AEGIS_PROFILE (or `aegis serve --profile`) overrides it at start-up.
+active_profile: balanced
+
+# Tenant → profile name.
+tenant_profiles: {}
+#   retail-bank: strict
+
+# USD per 1k tokens, used for max_cost_usd_per_window. Local models carry a notional
+# internal rate; their real limit is max_compute_seconds_per_window.
+model_prices:
+  demo-echo: 0.0001
+  gemma3:270m: 0.00005
+  gemma3:4b: 0.0002
+  qwen3:8b: 0.0003
+  gpt-4o-mini: 0.0005
+default_model_price: 0.0004   # any model missing above
+
+# Gateway privileges by role (the role itself comes from the caller's JWT `role` claim).
+roles:
+  control_plane: [admin, security]   # policy read/reload, audit export, HITL approve/deny
+  hitl_reviewers: [teller]           # may read their tenant's HITL queue
+
+reporting:
+  audit_log_path: artifacts/audit.jsonl
+  metrics_enabled: true
+  export_formats: [jsonl, csv]
+
+# ---------------------------------------------------------------------------
+# Information flow (OpenAPPA subset). Question before every tool call: is this
+# data allowed to go to this destination? Spec: https://github.com/archestra-ai/OpenAPPA
+#
+# Tool contract keys:
+#   annotator          source: classify the call's arguments with this annotator
+#   delta_audience     source: reading narrows the session audience to this list
+#   delta_trust        source: trust of the data read ("trusted" | "untrusted")
+#   requires_audience  sink: destination audience; blocked when unreachable
+#   requires_trust     sink: minimum session trust
+# ---------------------------------------------------------------------------
+information_flow:
+  # A session can reach public destinations until it reads restricted data.
+  label:
+    initial_audience: [public, internal]
+    initial_trust: trusted
+
+  # Deterministic document classifiers (not an LLM). "classify_document" also
+  # classifies every payload sent to a sink tool.
+  annotators:
+    - name: classify_document
+      internal_path_markers: [customer-records, crm, kyc, ticket, counterparty]
+      public_path_markers: [public-docs, marketing, faq]
+      # IBAN / PESEL / NRB / SSN / card numbers are always detected via Presidio.
+      # Keep these specific: generic words like "account" would taint ordinary chat.
+      internal_content_markers: [iban, pesel, ssn, counterparty, kyc]
+
+  tools:
+    - name: read_file
+      annotator: classify_document   # label comes from classifying what is read
+    - name: get_ticket_from_crm
+      delta_audience: [internal]
+      delta_trust: trusted
+    - name: get_counterparty_balance
+      delta_audience: [internal]
+      delta_trust: trusted
+    - name: get_account_balance
+      delta_audience: [internal]
+      delta_trust: trusted
+    - name: list_transactions
+      delta_audience: [internal]
+      delta_trust: trusted
+    - name: initiate_payment
+      delta_audience: [internal]
+      delta_trust: trusted
+      requires_audience: [internal]
+    - name: echo
+      requires_audience: [internal, public]
+    - name: send_email
+      requires_audience: [internal]   # no public leak after a CRM read
+    - name: file_github_issue
+      # Public sink: blocked once the session has ingested internal/customer data.
+      requires_audience: [public]
+      requires_trust: trusted
+
+# ---------------------------------------------------------------------------
+# Historical attack signatures. Keep every repetition bounded ({0,200}, not .* /
+# [^)]*): patterns run on untrusted input with no timeout. Unsafe (ReDoS-prone) or
+# invalid patterns are rejected and reported on /health.
+# ---------------------------------------------------------------------------
+attack_signatures:
+  version: "1.0"
+  updated: "2026-10-03"
+  signatures:
+    - id: HA-001
+      category: malicious_code_execution
+      name: python-eval-exec
+      description: Attempt to run arbitrary Python via eval/exec in model or tool context
+      patterns:
+        - '(?i)(?<!\.)\beval\s*\('  # not a method call such as PyTorch model.eval()
+        - '(?i)\bexec\s*\('
+        - '(?i)__import__\s*\(\s*["'']os["'']'
+        - '(?i)subprocess\.(?:call|run|Popen)'
+        - '(?i)os\.system\s*\('
+
+    - id: HA-002
+      category: unsafe_deserialization
+      name: pickle-yaml-deserialize
+      description: Unsafe deserialization gadgets historically used against ML pipelines
+      patterns:
+        - '(?i)pickle\.loads?\s*\('
+        - '(?i)yaml\.load\s*\([^)]{0,200}\)'
+        - '(?i)marshal\.loads?\s*\('
+        - '(?i)torch\.load\s*\([^)]{0,200}weights_only\s*=\s*False'
+        - '(?i)joblib\.load\s*\('
+
+    - id: HA-003
+      category: supply_chain_model_repo
+      name: malicious-model-uri
+      description: Supply-chain style pulls from untrusted model repositories / raw binaries
+      patterns:
+        - '(?i)huggingface\.co/[^/\s]{1,100}/[^/\s]{1,100}[^\n]{0,200}?(?:malware|backdoor|evil)'
+        - '(?i)(?:curl|wget)[^\n|]{0,200}?(?:\.bin|\.gguf|\.pt|\.pkl)[^\n|]{0,200}\|[^\n]{0,50}?\b(?:bash|sh)\b'
+        - '(?i)raw\.githubusercontent\.com/[^\s]{0,200}/(?:install|setup)\.sh'
+        - '(?i)pip\s+install\s+(?:--index-url|--extra-index-url)\s+http://'
+
+    - id: HA-004
+      category: prompt_leakage
+      name: system-prompt-exfil
+      description: Classic attempts to exfiltrate system / developer prompts
+      patterns:
+        - '(?i)ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions'
+        - '(?i)reveal\s+(?:your\s+)?(?:system|hidden)\s+prompt'
+        - '(?i)print\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message)'
+        - '(?i)repeat\s+(?:everything|all)\s+(?:above|before)\s+(?:this|the\s+line)'
+
+# ---------------------------------------------------------------------------
+# MCP proxy. Agents connect to Aegis at /mcp (Streamable HTTP, JWT bearer) or
+# through `aegis mcp-bridge` (stdio); Aegis forwards allowed tool calls to these
+# real MCP servers. Every call passes the controls of the caller's profile
+# (allowlist, role AuthZ, DLP, information flow, System One / HITL, loop guard,
+# budgets) and every result passes egress DLP + information flow.
+# Changes here reconnect the upstreams on the next request.
+# ---------------------------------------------------------------------------
+mcp:
+  upstreams:
+    - name: bank
+      transport: stdio
+      command: python          # "python" = the interpreter running Aegis
+      args: ["-m", "aegis.demo.bank_mcp_server"]
+    # - name: remote-tools
+    #   transport: streamable_http
+    #   url: https://tools.example.internal/mcp
+
+# ---------------------------------------------------------------------------
+# Agent hooks: Aegis guarding Claude Code itself, in the background. Claude Code
+# sends every prompt, tool call and tool result to /v1/hooks/claude-code
+# (install: `aegis claude-hooks install`); the active profile's controls decide:
+#   prompt      block → prompt stopped · sensitive data → on_sensitive_prompt
+#   tool call   block → denied · hold → Claude asks you · redact → masked + asks you
+#   tool result block → content withheld (e.g. injected web page) · redact → masked
+# ---------------------------------------------------------------------------
+agent_hooks:
+  enabled: true
+  prompts: true
+  tool_calls: true
+  tool_results: true
+  # Claude tools (glob) whose calls / results are checked: what executes or reaches
+  # outside the machine. Add "Read", "Write", "Edit" to also police local files.
+  check_calls_of: [Bash, WebFetch, WebSearch, "mcp__*"]
+  check_results_of: [Bash, WebFetch, WebSearch, "mcp__*"]
+  # Where injection/jailbreak checks may ask the LLM judge ("prompt" = your prompt);
+  # elsewhere they are regex + signatures only (fast, no false alarms on shell commands).
+  llm_judge_for: [WebFetch, WebSearch, "mcp__*"]
+  on_sensitive_prompt: block      # block | warn
+  # Controls meant for LLM/bank traffic, not for an agent's own actions.
+  skip_controls: [budget, loop_guard, system_one]
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+profiles:
+  # PERMISSIVE: fewer blocks, prefer redact/log; higher budgets.
+  permissive:
+    allowed_models:
+      - "demo-echo"
+      - "gemma3:270m"
+      - "gemma3:4b"
+      - "qwen3:8b"
+      - "gpt-4o-mini"
+
+    adherence: 0.80   # semantic controls inherit it; strictness low raises it to 0.85
+
+    budgets:
+      max_tokens_per_request: 8192
+      max_tokens_per_window: 200000
+      max_cost_usd_per_window: 10.0
+      max_requests_per_window: 500
+      window_seconds: 3600
+      max_compute_seconds_per_window: 3600
+      on_exceed: degrade
+      degrade_model: "gemma3:270m"   # cheapest real model, not the demo echo
+      scope: tenant
+
+    controls:
+      pii_detector:
+        enabled: true
+        action: redact
+        strictness: low
+        patterns: [email, credit_card]
+
+      secrets_detector:
+        enabled: true
+        action: redact
+        strictness: medium
+        patterns:
+          - aws_access_key
+          - private_key
+          - openai_key
+          - github_token
+
+      authz_gate:
+        enabled: false
+        action: log
+        require_auth_for: [admin/*]
+        privileged_roles: [admin, security, developer]
+
+      tool_allowlist:
+        enabled: false
+        action: log
+        allowed_tools: []
+
+      tool_authz:
+        enabled: false
+        action: log
+        role_tools: {}
+
+      dlp_masking:
+        enabled: true
+        action: redact
+        strictness: medium
+        apply_on: [inbound, outbound]
+        patterns: [email, credit_card, iban, account]
+
+      prompt_injection:
+        enabled: true
+        action: log
+        strictness: low
+        backend: heuristic   # regex only: fastest, no model dependency
+
+      jailbreak_detector:
+        enabled: true
+        action: log
+        strictness: low
+        backend: heuristic
+
+      historical_exploits:
+        enabled: true
+        action: block
+        categories:
+          - malicious_code_execution
+          - unsafe_deserialization
+          - supply_chain_model_repo
+
+      information_flow:
+        enabled: true
+        action: block
+
+      system_one:
+        enabled: true
+        action: log
+        adherence: 0.90
+        backend: heuristic
+        hitl_tools: [initiate_payment]
+        hitl_amount_pln: 50000
+
+      loop_guard:
+        enabled: true
+        action: log
+        max_tool_calls_per_session: 80
+        max_repeated_tool: 20
+        max_steps_per_session: 200
+
+  # BALANCED (default demo).
+  balanced:
+    # Allowed upstream LLM / model identifiers (OpenAI-compatible ids or local Ollama tags).
+    # On `on_exceed: degrade` the gateway falls back to the FIRST entry, so list the cheapest first.
+    allowed_models:
+      - "demo-echo"     # deterministic echo used by tests and the offline demo
+      - "gemma3:4b"     # local (Ollama)
+      - "qwen3:8b"      # local (Ollama)
+      - "gpt-4o-mini"   # external API — only if AEGIS_UPSTREAM_URL points at it
+
+    # Global adherence: confidence (0–1) a semantic / System One verdict needs to trigger
+    # the control's action. A control's own `adherence` overrides it; strictness shifts it
+    # (high −0.15, low +0.05). On Presidio controls a per-control `adherence` is the
+    # minimum detector score instead (default by strictness: high 0.30 · medium 0.35 · low 0.50).
+    adherence: 0.70
+
+    budgets:
+      max_tokens_per_request: 4096
+      max_tokens_per_window: 50000
+      max_cost_usd_per_window: 2.0
+      max_requests_per_window: 100
+      window_seconds: 3600
+      # Measured model wall-clock time per window — the real cost of local models.
+      max_compute_seconds_per_window: 600
+      # When budget is exceeded: block | degrade (force degrade_model, default allowed_models[0])
+      on_exceed: block
+      # Budget window shared per: tenant | role | principal (API token)
+      scope: tenant
+
+    controls:
+      # --- Deterministic (non-AI) ---
+      pii_detector:
+        enabled: true
+        action: redact          # block | redact | log
+        strictness: medium      # low | medium | high
+        patterns:
+          - email
+          - phone
+          - ssn
+          - credit_card
+
+      secrets_detector:
+        enabled: true
+        action: block
+        strictness: high
+        patterns:
+          - aws_access_key
+          - generic_api_key
+          - private_key
+          - bearer_token
+          - openai_key
+          - github_token
+
+      authz_gate:
+        enabled: true
+        action: block
+        # Methods that require a verified Bearer principal
+        require_auth_for:
+          - tools/call
+          - mcp/invoke
+          - files/*
+          - admin/*
+        # Roles allowed for those methods (token-bound; not client-asserted)
+        privileged_roles: [admin, security, developer, teller]
+
+      tool_allowlist:
+        enabled: true
+        action: block
+        allowed_tools:
+          - search
+          - calculator
+          - get_weather
+          - list_files
+          - read_file
+          - echo
+          - get_account_balance
+          - get_counterparty_balance
+          - list_transactions
+          - initiate_payment
+          - get_ticket_from_crm
+          - send_email
+          - file_github_issue
+
+      # Precise AuthZ: role may only call listed MCP/bank functions
+      tool_authz:
+        enabled: true
+        action: block
+        role_tools:
+          developer:
+            - search
+            - calculator
+            - get_weather
+            - list_files
+            - read_file
+            - echo
+          teller:
+            - echo
+            - get_account_balance
+            - get_counterparty_balance
+            - list_transactions
+            - initiate_payment
+            - get_ticket_from_crm
+            - send_email
+            - file_github_issue
+          admin:
+            - "*"
+          security:
+            - "*"
+
+      # DLP / masking — dedicated data-loss layer (inbound prompt + egress response)
+      dlp_masking:
+        enabled: true
+        action: redact
+        strictness: high
+        apply_on: [inbound, outbound]
+        patterns:
+          - email
+          - phone
+          - ssn
+          - pesel
+          - credit_card
+          - iban
+          - account
+
+      # --- Semantic (AI-based) — regex fast path, then a local LLM judge ---
+      # backend: heuristic (regex only) | ollama (regex first; LLM judge when regex finds nothing)
+      # fail_mode: open (allow + log `semantic_unavailable`) | closed (block) when the model is down
+      # ollama_url defaults to $AEGIS_OLLAMA_URL, then http://127.0.0.1:11434
+      prompt_injection:
+        enabled: true
+        action: block
+        # adherence: global 0.70
+        strictness: medium
+        backend: ollama
+        ollama_model: gemma3:4b
+        timeout_seconds: 5
+        fail_mode: open
+
+      jailbreak_detector:
+        enabled: true
+        action: block
+        adherence: 0.75
+        strictness: medium
+        backend: ollama
+        ollama_model: gemma3:4b
+        timeout_seconds: 5
+        fail_mode: open
+
+      # --- Historical attack mitigation (signature feed) ---
+      historical_exploits:
+        enabled: true
+        action: block
+        # Signatures: `attack_signatures` at the top of this file. Optional external
+        # threat-intel feed, preferred while reachable (inline signatures are the fallback):
+        #   feed_url: https://intel.example.org/aegis/historical_attacks.yaml
+        #   feed_refresh_seconds: 300
+        categories:
+          - malicious_code_execution
+          - unsafe_deserialization
+          - supply_chain_model_repo
+          - prompt_leakage
+
+      # OpenAPPA information-flow; tool contracts: `information_flow` at the top of this file
+      information_flow:
+        enabled: true
+        action: block
+
+      # System One (JEV analog): typed allow/hold/block with calibrated probabilities
+      system_one:
+        enabled: true
+        action: hold
+        adherence: 0.60
+        strictness: medium
+        backend: heuristic
+        fail_mode: open
+        hitl_tools: [initiate_payment]
+        hitl_amount_pln: 1000
+
+      # Runaway agent loops (tool hops / identical repeats per session)
+      loop_guard:
+        enabled: true
+        action: block
+        max_tool_calls_per_session: 8
+        max_repeated_tool: 3
+        max_steps_per_session: 40
+
+  # STRICT: maximum adherence; block by default.
+  strict:
+    allowed_models:
+      - "demo-echo"
+      - "gemma3:4b"
+
+    adherence: 0.50   # semantic controls inherit it; strictness high lowers it to 0.35
+
+    budgets:
+      max_tokens_per_request: 2048
+      max_tokens_per_window: 20000
+      max_cost_usd_per_window: 0.5
+      max_requests_per_window: 40
+      window_seconds: 3600
+      max_compute_seconds_per_window: 120
+      on_exceed: block
+      scope: principal   # every API token has its own window
+
+    controls:
+      pii_detector:
+        enabled: true
+        action: block
+        strictness: high
+        patterns: [email, phone, ssn, credit_card]
+
+      secrets_detector:
+        enabled: true
+        action: block
+        strictness: high
+        patterns:
+          - aws_access_key
+          - generic_api_key
+          - private_key
+          - bearer_token
+          - openai_key
+          - github_token
+
+      authz_gate:
+        enabled: true
+        action: block
+        require_auth_for:
+          - tools/call
+          - mcp/invoke
+          - admin/*
+          - files/*
+        privileged_roles: [admin, security, developer, teller]
+
+      tool_allowlist:
+        enabled: true
+        action: block
+        allowed_tools:
+          - search
+          - calculator
+          - echo
+          - get_account_balance
+          - get_counterparty_balance
+          - list_transactions
+          - initiate_payment
+          - get_ticket_from_crm
+          - file_github_issue
+          - send_email
+
+      tool_authz:
+        enabled: true
+        action: block
+        role_tools:
+          developer: [search, calculator, echo]
+          teller: [echo, get_account_balance, get_counterparty_balance, list_transactions, initiate_payment, get_ticket_from_crm, file_github_issue, send_email]
+          admin: ["*"]
+          security: ["*"]
+
+      dlp_masking:
+        enabled: true
+        action: block
+        strictness: high
+        apply_on: [inbound, outbound]
+        patterns: [email, phone, ssn, pesel, credit_card, iban, account]
+
+      prompt_injection:
+        enabled: true
+        action: block
+        strictness: high
+        backend: ollama
+        ollama_model: gemma3:4b
+        timeout_seconds: 5
+        fail_mode: closed   # model unavailable => block (no unchecked traffic)
+
+      jailbreak_detector:
+        enabled: true
+        action: block
+        strictness: high
+        backend: ollama
+        ollama_model: gemma3:4b
+        timeout_seconds: 5
+        fail_mode: closed
+
+      historical_exploits:
+        enabled: true
+        action: block
+        categories:
+          - malicious_code_execution
+          - unsafe_deserialization
+          - supply_chain_model_repo
+          - prompt_leakage
+
+      information_flow:
+        enabled: true
+        action: block
+
+      system_one:
+        enabled: true
+        action: hold
+        adherence: 0.45
+        strictness: high
+        backend: heuristic
+        fail_mode: closed
+        hitl_tools: [initiate_payment, get_counterparty_balance]
+        hitl_amount_pln: 0
+
+      loop_guard:
+        enabled: true
+        action: block
+        max_tool_calls_per_session: 6
+        max_repeated_tool: 2
+        max_steps_per_session: 20

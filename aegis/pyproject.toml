@@ -1,0 +1,66 @@
+[project]
+name = "aegis"
+version = "1.0.0"
+description = "Hybrid AI Control Layer — guardrails, budgets, and security reporting for agentic systems"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "fastapi",
+  "httpx",
+  # MCP proxy (agent → Aegis /mcp → upstream MCP servers) and the stdio bridge
+  "mcp>=2.3",
+  "PyJWT>=2.9",
+  "pydantic",
+  "pydantic-settings>=2.14.2",
+  "pyyaml",
+  "uvicorn",
+  "jinja2",
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+  "opentelemetry-instrumentation-fastapi>=0.48b0",
+  "opentelemetry-instrumentation-httpx>=0.48b0",
+  # Data controls (PII / secrets / DLP) — Microsoft Presidio + small spaCy NER model (all MIT)
+  "presidio-analyzer>=2.2",
+  "presidio-anonymizer>=2.2",
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+
+[project.scripts]
+aegis = "aegis.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "fakeredis>=2.26",
+  "redis>=5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aegis"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["live_ollama: needs a running local Ollama with gemma3:4b (skipped otherwise)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI uses `Depends()` / `Query()` etc. in argument defaults by design.
+"src/aegis/gateway.py" = ["B008"]

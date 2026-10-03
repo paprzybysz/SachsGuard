@@ -1,0 +1,95 @@
+name: aegis
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    profiles: ["redis"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.113.0
+    profiles: ["obs"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    # The app pushes OTLP and Prometheus scrapes 8889 over the internal compose
+    # network, so these ports are bound to localhost only — not 0.0.0.0. This
+    # avoids an unauthenticated OTLP write / Prometheus read surface on the host.
+    # For non-local deployments, drop the host mapping entirely and add an OTLP
+    # auth extension + network policy (see docs/architecture.md).
+    ports:
+      - "127.0.0.1:4318:4318"   # OTLP/HTTP receiver (localhost only)
+      - "127.0.0.1:8889:8889"   # Prometheus metrics exporter (localhost only)
+    volumes:
+      - ./deploy/observability/otelcol.yaml:/etc/otelcol/config.yaml:ro
+
+  control-layer:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      AEGIS_ROOT: /app
+      # The single policy file; AEGIS_PROFILE overrides its active_profile.
+      AEGIS_POLICY: /app/policies/policy.yaml
+      AEGIS_PROFILE: ${AEGIS_PROFILE:-}
+      AEGIS_DEMO_ECHO: "1"
+      # sqlite (default durable) | memory | redis
+      AEGIS_BUDGET_BACKEND: ${AEGIS_BUDGET_BACKEND:-sqlite}
+      AEGIS_REDIS_URL: redis://redis:6379/0
+      # Local development fallback. Set AEGIS_JWT_SECRET in shared/production deployments.
+      AEGIS_JWT_SECRET: ${AEGIS_JWT_SECRET:-aegis-local-development-secret-change-me}
+      AEGIS_JWT_ISSUER: ${AEGIS_JWT_ISSUER:-aegis}
+      AEGIS_JWT_AUDIENCE: ${AEGIS_JWT_AUDIENCE:-aegis-api}
+      # Empty unless --profile obs (collector hostname only exists then).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: aegis
+      # LLM judge (semantic controls) — Ollama running on the host
+      AEGIS_OLLAMA_URL: ${AEGIS_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["aegis", "serve", "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      # Judges can edit policies/policy.yaml live; container sees changes immediately
+      - ./policies:/app/policies
+      - ./artifacts:/app/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["obs"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      control-layer:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["obs"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/aegis.json
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  # Observability:
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose --profile obs up --build
+  # Grafana http://localhost:3000  (admin/admin)
+  # Optional scale-out: docker compose --profile redis up --build

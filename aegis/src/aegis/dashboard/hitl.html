@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aegis — Human-in-the-loop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0b1220;
+      --bg1: #121a2b;
+      --bg2: #1a2438;
+      --line: #2a3a55;
+      --text: #e8eef9;
+      --muted: #93a4c3;
+      --ok: #3ddc97;
+      --warn: #f0b429;
+      --bad: #ff5d6c;
+      --accent: #4cc9f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1b3a5f 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #3a1840 0%, transparent 50%),
+        var(--bg0);
+      min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.25rem 1.75rem; border-bottom: 1px solid var(--line);
+      gap: 1rem; flex-wrap: wrap;
+    }
+    .brand { display: flex; gap: .75rem; align-items: center; }
+    .mark {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--warn), #7b2cbf);
+      display: grid; place-items: center; font-weight: 700;
+    }
+    h1 { font-size: 1.15rem; margin: 0; }
+    .sub { color: var(--muted); font-size: .85rem; }
+    nav { display: flex; gap: .5rem; align-items: center; }
+    nav a {
+      color: var(--text); text-decoration: none; font-size: .85rem; font-weight: 600;
+      padding: .45rem .75rem; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--bg2);
+    }
+    nav a.current { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); color: var(--warn); }
+    main { padding: 1rem 1.75rem 2rem; display: grid; gap: 1rem; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
+    @media (max-width: 800px) { .kpis { grid-template-columns: 1fr 1fr; } }
+    .kpi, .panel, .card {
+      background: color-mix(in srgb, var(--bg1) 92%, transparent);
+      border: 1px solid var(--line); border-radius: 14px;
+    }
+    .kpi { padding: .75rem; }
+    .kpi .label { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+    .kpi .value { font-family: "IBM Plex Mono", monospace; font-size: 1.45rem; margin-top: .25rem; }
+    .panel { padding: 1rem 1.1rem; }
+    .panel h2 { margin: 0 0 .75rem; font-size: .95rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+    .cards { display: grid; gap: .75rem; }
+    .card { padding: 1rem; }
+    .card header { border: none; padding: 0 0 .6rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0; }
+    .tag {
+      font-family: "IBM Plex Mono", monospace; font-size: .72rem;
+      padding: .15rem .45rem; border-radius: 6px; border: 1px solid var(--line);
+    }
+    .tag.pending { color: var(--warn); }
+    .tag.approved { color: var(--ok); }
+    .tag.denied, .tag.expired { color: var(--bad); }
+    pre {
+      background: var(--bg0); border: 1px solid var(--line); border-radius: 10px;
+      padding: .75rem; overflow: auto; font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+      max-height: 180px; margin: .5rem 0 0;
+    }
+    button {
+      font: inherit; cursor: pointer; border: none; border-radius: 10px;
+      padding: .55rem .85rem; font-weight: 700; color: var(--text); margin-right: .4rem; margin-top: .6rem;
+    }
+    button.ok { background: linear-gradient(135deg, #1b8a5a, #3ddc97); color: #062016; }
+    button.no { background: var(--bg2); border: 1px solid var(--line); }
+    .muted { color: var(--muted); font-size: .8rem; }
+    .empty { padding: 1.5rem; text-align: center; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { text-align: left; padding: .45rem .35rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: .72rem; text-transform: uppercase; }
+    .flash { margin-top: .6rem; font-size: .85rem; }
+    .flash.err { color: var(--bad); }
+    .flash.ok { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark">H</div>
+      <div>
+        <h1>Human-in-the-loop console</h1>
+        <div class="sub">Operator review for held bank / MCP actions · JWT: demo-admin</div>
+      </div>
+    </div>
+    <nav>
+      <a href="/">Control layer</a>
+      <a class="current" href="/hitl">HITL console</a>
+    </nav>
+  </header>
+  <main>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Pending</div><div class="value" id="m-pending" style="color:var(--warn)">0</div></div>
+      <div class="kpi"><div class="label">Approved</div><div class="value" id="m-approved" style="color:var(--ok)">0</div></div>
+      <div class="kpi"><div class="label">Denied</div><div class="value" id="m-denied" style="color:var(--bad)">0</div></div>
+      <div class="kpi"><div class="label">Expired</div><div class="value" id="m-expired">0</div></div>
+    </div>
+    <section class="panel">
+      <h2>Awaiting human decision</h2>
+      <p class="muted">System One paused these tools. Approve executes the bank MCP call (with egress DLP). Deny drops the action. Queue TTL is 10 minutes.</p>
+      <div id="flash" class="flash"></div>
+      <div class="cards" id="queue"></div>
+    </section>
+    <section class="panel">
+      <h2>Recent decisions</h2>
+      <table>
+        <thead><tr><th>Status</th><th>Tool</th><th>Role</th><th>By</th><th>When</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const ADMIN_TOKEN = '__AEGIS_ADMIN_TOKEN__';
+    const headers = { 'Authorization': 'Bearer ' + ADMIN_TOKEN, 'Content-Type': 'application/json' };
+
+    function fmtTime(ts) {
+      if (!ts) return '—';
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    function setFlash(text, ok) {
+      const el = document.getElementById('flash');
+      el.textContent = text || '';
+      el.className = 'flash ' + (ok ? 'ok' : 'err');
+    }
+
+    async function refresh() {
+      const res = await fetch('/v1/hitl/queue', { headers });
+      if (!res.ok) {
+        setFlash('Cannot load queue (need admin JWT). HTTP ' + res.status, false);
+        return;
+      }
+      const data = await res.json();
+      const m = data.metrics || {};
+      document.getElementById('m-pending').textContent = m.pending ?? 0;
+      document.getElementById('m-approved').textContent = m.approved ?? 0;
+      document.getElementById('m-denied').textContent = m.denied ?? 0;
+      document.getElementById('m-expired').textContent = m.expired ?? 0;
+
+      const box = document.getElementById('queue');
+      box.replaceChildren();
+      const items = data.items || [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No pending actions. Trigger initiate_payment as demo-teller to enqueue a review.';
+        box.appendChild(empty);
+      }
+      items.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'card';
+        const s1 = item.system_one || {};
+        const title = document.createElement('header');
+        const h = document.createElement('strong');
+        h.textContent = item.tool_name;
+        const tag = document.createElement('span');
+        tag.className = 'tag pending';
+        tag.textContent = 'pending';
+        title.append(h, document.createTextNode(' '), tag);
+
+        const meta = document.createElement('div');
+        meta.className = 'meta muted';
+        meta.textContent = [
+          'role ' + item.role,
+          'tenant ' + item.tenant,
+          'p_hitl ' + (s1.p_hitl != null ? Number(s1.p_hitl).toFixed(2) : '—'),
+          'p_unsafe ' + (s1.p_unsafe != null ? Number(s1.p_unsafe).toFixed(2) : '—'),
+          fmtTime(item.created_at),
+        ].join(' · ');
+
+        const why = document.createElement('p');
+        why.className = 'muted';
+        why.textContent = (item.reasons || []).join('; ') || 'Held by System One';
+
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(item.arguments || {}, null, 2);
+
+        const actions = document.createElement('div');
+        const ok = document.createElement('button');
+        ok.className = 'ok';
+        ok.type = 'button';
+        ok.textContent = 'Approve & execute';
+        ok.onclick = () => resolve(item.id, 'approve');
+        const no = document.createElement('button');
+        no.className = 'no';
+        no.type = 'button';
+        no.textContent = 'Deny';
+        no.onclick = () => resolve(item.id, 'deny');
+        actions.append(ok, no);
+
+        card.append(title, meta, why, pre, actions);
+        box.appendChild(card);
+      });
+
+      const tbody = document.getElementById('history');
+      tbody.replaceChildren();
+      (data.history || []).forEach(item => {
+        const tr = document.createElement('tr');
+        const cells = [
+          item.status,
+          item.tool_name,
+          item.role,
+          item.resolved_by || '—',
+          fmtTime(item.resolved_at),
+        ];
+        cells.forEach((val, i) => {
+          const td = document.createElement('td');
+          if (i === 0) {
+            const tag = document.createElement('span');
+            tag.className = 'tag ' + item.status;
+            tag.textContent = item.status;
+            td.appendChild(tag);
+          } else {
+            td.textContent = val;
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function resolve(id, action) {
+      setFlash('', true);
+      const res = await fetch('/v1/hitl/' + id + '/' + action, { method: 'POST', headers });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFlash((body.detail && (body.detail.error || JSON.stringify(body.detail))) || ('HTTP ' + res.status), false);
+      } else {
+        setFlash(action === 'approve' ? 'Executed via bank MCP.' : 'Denied — no side effects.', true);
+      }
+      await refresh();
+    }
+
+    refresh();
+    setInterval(refresh, 2500);
+  </script>
+</body>
+</html>

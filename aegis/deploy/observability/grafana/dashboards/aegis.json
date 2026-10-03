@@ -1,0 +1,205 @@
+{
+  "title": "Aegis Control Layer",
+  "uid": "aegis-control-layer",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{ "expr": "aegis_evaluations", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Blocked",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [{ "expr": "aegis_blocked", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Redacted",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [{ "expr": "aegis_redacted", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Block rate",
+      "description": "Fraction of requests blocked over the last 5 m",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" }
+      },
+      "targets": [
+        {
+          "expr": "rate(aegis_blocked[5m]) / rate(aegis_evaluations[5m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Cost USD",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [{ "expr": "aegis_cost_usd", "refId": "A" }]
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Security posture",
+      "description": "stable (0) → guarded (1) → elevated (2)",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "STABLE",   "color": "green"  } } },
+            { "type": "value", "options": { "1": { "text": "GUARDED",  "color": "yellow" } } },
+            { "type": "value", "options": { "2": { "text": "ELEVATED", "color": "red"    } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red",    "value": 2 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "clamp(floor(rate(aegis_blocked[5m]) / clamp_min(rate(aegis_evaluations[5m]), 0.0001) / 0.05), 0, 2)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Decisions over time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "rate(aegis_blocked[5m])",    "legendFormat": "blocked",  "refId": "A" },
+        { "expr": "rate(aegis_redacted[5m])",   "legendFormat": "redacted", "refId": "B" },
+        { "expr": "rate(aegis_allowed[5m])",    "legendFormat": "allowed",  "refId": "C" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Budget window",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "aegis_budget_tokens",           "legendFormat": "tokens {{tenant}}",          "refId": "A" },
+        { "expr": "aegis_budget_requests",         "legendFormat": "requests {{tenant}}",        "refId": "B" },
+        { "expr": "aegis_budget_compute_seconds",  "legendFormat": "compute s {{tenant}}",       "refId": "C" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Control-layer latency (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(aegis_evaluation_duration_ms_bucket[5m])) by (le)) / 1000",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aegis_evaluation_duration_ms_bucket[5m])) by (le)) / 1000",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(aegis_evaluation_duration_ms_bucket[5m])) by (le)) / 1000",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "p95 latency per control",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aegis_evaluation_duration_ms_bucket[5m])) by (le, control)) / 1000",
+          "legendFormat": "{{control}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Blocked interactions (rate / 5 m)",
+      "description": "Real-time rate of blocked requests — spike indicates active threat activity",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } }
+      },
+      "targets": [
+        { "expr": "rate(aegis_blocked[5m])",     "legendFormat": "block rate", "refId": "A" },
+        { "expr": "rate(aegis_evaluations[5m])", "legendFormat": "total rate", "refId": "B" }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Threat categories (5 m increase)",
+      "description": "Breakdown of threat types — prompt_injection, pii, secrets, budget, etc.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "increase(aegis_findings[5m])",
+          "legendFormat": "{{aegis_category}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Findings by control",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "targets": [
+        {
+          "expr": "increase(aegis_findings[5m])",
+          "legendFormat": "{{aegis_control}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Held (HITL)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 28 },
+      "targets": [{ "expr": "aegis_held_total", "refId": "A" }]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "HITL pending",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 28 },
+      "targets": [{ "expr": "aegis_hitl_pending", "refId": "A" }]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "HITL approved",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 28 },
+      "targets": [{ "expr": "aegis_hitl_approved_total", "refId": "A" }]
+    }
+  ]
+}

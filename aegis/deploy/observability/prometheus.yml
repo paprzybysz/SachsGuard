@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # Single metrics source: the OTEL Collector re-exposes everything Aegis emits
+  # via OTLP as a Prometheus scrape endpoint. The app no longer serves /metrics.
+  - job_name: aegis
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["otel-collector:8889"]
