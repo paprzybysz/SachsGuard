@@ -1,4 +1,4 @@
-.PHONY: sync test serve demo docker-up docker-down docker-suite ollama
+.PHONY: sync test test-l3 serve demo docker-up docker-down docker-suite ollama
 
 # Smallest instruct model Ollama publishes (135M parameters). The business suite
 # judges with this tag; the gateway keeps the model named in policies/policy.yaml.
@@ -22,6 +22,10 @@ sync:
 
 test:
 	$(RUN)pytest -v
+
+# L3: business decisions through the HTTP API. Judge is local Ollama ($(OLLAMA_MODEL)).
+test-l3:
+	AEGIS_OLLAMA_MODEL=$(OLLAMA_MODEL) $(RUN)pytest tests/test_l3_api.py -v -m l3
 
 serve:
 	AEGIS_ROOT=$(PWD) AEGIS_PROFILE=$(PROFILE) $(RUN)aegis serve --host 127.0.0.1 --port 8080
