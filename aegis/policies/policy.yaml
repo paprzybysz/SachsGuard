@@ -430,7 +430,7 @@ profiles:
         # adherence: global 0.70
         strictness: medium
         backend: ollama
-        ollama_model: gemma3:4b
+        ollama_model: gemma3:270m
         timeout_seconds: 5
         fail_mode: open
 
@@ -440,7 +440,7 @@ profiles:
         adherence: 0.75
         strictness: medium
         backend: ollama
-        ollama_model: gemma3:4b
+        ollama_model: gemma3:270m
         timeout_seconds: 5
         fail_mode: open
 
@@ -565,7 +565,7 @@ profiles:
         action: block
         strictness: high
         backend: ollama
-        ollama_model: gemma3:4b
+        ollama_model: gemma3:270m
         timeout_seconds: 5
         fail_mode: closed   # model unavailable => block (no unchecked traffic)
 
@@ -574,7 +574,7 @@ profiles:
         action: block
         strictness: high
         backend: ollama
-        ollama_model: gemma3:4b
+        ollama_model: gemma3:270m
         timeout_seconds: 5
         fail_mode: closed
 

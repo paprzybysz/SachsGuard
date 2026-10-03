@@ -22,8 +22,51 @@ services:
     volumes:
       - ./deploy/observability/otelcol.yaml:/etc/otelcol/config.yaml:ro
 
+  # Local judge for the business-requirement suite only. The gateway still
+  # uses AEGIS_OLLAMA_URL (the host's Ollama) and the model named in policy.yaml.
+  # Port 11434 is not published, so this does not clash with a host Ollama.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Started by `make docker-up` after the small model is pulled. Not part of `up`,
+  # so a normal stack start does not run pytest before the weights exist.
+  business-suite:
+    build:
+      context: .
+      target: suite
+    profiles: ["suite"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      AEGIS_OLLAMA_URL: http://ollama:11434
+      AEGIS_OLLAMA_MODEL: ${AEGIS_OLLAMA_MODEL:-smollm2:135m}
+      AEGIS_BUDGET_BACKEND: memory
+      AEGIS_WARMUP: "0"
+      AEGIS_JWT_SECRET: test-secret-for-aegis-jwt-32bytes
+      PYTHONUNBUFFERED: "1"
+    command:
+      - python
+      - -m
+      - pytest
+      - tests/test_business_requirements.py
+      - -o
+      - addopts=
+      - -v
+      - -s
+      - --tb=short
+
   control-layer:
-    build: .
+    build:
+      context: .
+      target: runtime
     ports:
       - "8080:8080"
     environment:
@@ -88,6 +131,9 @@ services:
       - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+
+volumes:
+  ollama-models:
 
   # Observability:
   #   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose --profile obs up --build

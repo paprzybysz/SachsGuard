@@ -55,7 +55,9 @@ packages = ["src/aegis"]
 addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["live_ollama: needs a running local Ollama with gemma3:4b (skipped otherwise)"]
+markers = [
+  "live_ollama: needs a running local Ollama (gemma3:4b, or smollm2:135m for the business suite)",
+]
 
 [tool.ruff]
 line-length = 100

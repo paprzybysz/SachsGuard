@@ -1,4 +1,8 @@
-.PHONY: sync test serve demo docker-up docker-down ollama
+.PHONY: sync test serve demo docker-up docker-down docker-suite ollama
+
+# Smallest instruct model Ollama publishes (135M parameters). The business suite
+# judges with this tag; the gateway keeps the model named in policies/policy.yaml.
+OLLAMA_MODEL ?= smollm2:135m
 
 # Uses uv when installed, otherwise a plain venv (python3 -m venv .venv).
 UV := $(shell command -v uv 2>/dev/null)
@@ -31,6 +35,13 @@ ollama:
 
 docker-up:
 	docker compose up --build -d
+	docker compose up -d --wait ollama
+	docker compose exec -T ollama ollama pull $(OLLAMA_MODEL)
+	$(MAKE) docker-suite
+
+# Business requirements against the Ollama service (description + verdict on stdout).
+docker-suite:
+	AEGIS_OLLAMA_MODEL=$(OLLAMA_MODEL) docker compose --profile suite run --rm --build business-suite
 
 docker-down:
 	docker compose down -v

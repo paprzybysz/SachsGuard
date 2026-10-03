@@ -190,7 +190,9 @@ def classify_with_ollama(text: str, cfg: ControlConfig) -> Verdict:
                 "stream": False,
                 "format": "json",
                 "keep_alive": "15m",
-                "options": {"temperature": 0},
+                # The reply is one small JSON object. A cap stops a small model
+                # from generating until the context is full.
+                "options": {"temperature": 0, "num_predict": 64},
             },
             timeout=cfg.timeout_seconds,
         )
