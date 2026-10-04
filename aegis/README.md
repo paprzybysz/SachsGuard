@@ -4,26 +4,36 @@ Hybrid control layer (gateway + policy engine) that secures **app → agent → 
 
 Built for the HackYeah **AI Control Layer** challenge.
 
-## 60-second jury path
+
+
+`make sync test serve` does the same and uses `uv` when it is installed.
+
+### Docker (gateway + observability)
 
 ```bash
 cd aegis
-python3 -m venv .venv && .venv/bin/pip install -e . pytest   # or: uv sync --all-groups
-ollama pull gemma3:4b                                       # semantic LLM judge (optional, see below)
-AEGIS_ROOT=$PWD .venv/bin/aegis serve --host 127.0.0.1 --port 8080
-# other terminal:
-.venv/bin/pytest -v
-.venv/bin/aegis demo-agent --scenario all
-open http://127.0.0.1:8080
-open http://127.0.0.1:8080/hitl   # operator HITL console
-# API calls need: Authorization: Bearer demo
+# optional but recommended for the semantic LLM judge — run on the host, not in Compose:
+ollama serve                                          # if not already running as a service
+ollama pull gemma3:270m                               # model named in policies/policy.yaml
+
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose --profile obs up --build
 ```
 
-`make sync test serve` does the same and uses `uv` when it is installed. Docker: `docker compose up --build` → http://localhost:8080. The container reaches the host's Ollama through `AEGIS_OLLAMA_URL`.
+
+
+| Service | URL | Notes |
+|---|---|---|
+| Aegis dashboard | http://localhost:8080/ | API + live security UI · auth `Bearer demo` / JWT |
+| HITL console | http://localhost:8080/hitl | payment approve/deny |
+| Grafana | http://localhost:3000/ | dashboards · `admin` / `admin` (anonymous Viewer also on) |
+| Prometheus | http://localhost:9090/ | scrapes the OTEL collector |
+| OTEL collector | http://127.0.0.1:4318 | OTLP/HTTP (localhost only) |
+| Host Ollama | http://127.0.0.1:11434 | semantic judge; start separately |
+
 
 **Hot reload:** edit `policies/policy.yaml` (the only config file), then send another request. No restart is needed. An invalid edit is rejected and the previous version stays active (`/health` shows the error).
 
-**Without Ollama:** the test suite stays green because the LLM judge is stubbed, and the one live-model test is skipped. The `balanced` profile fails open: it allows the request and logs `semantic_unavailable`. The `strict` profile fails closed and blocks.
+**Without Ollama:** the stack still runs. The test suite stays green because the LLM judge is stubbed, and the one live-model test is skipped. The `balanced` profile fails open: it allows the request and logs `semantic_unavailable`. The `strict` profile fails closed and blocks.
 
 ## Deliverables map
 
@@ -95,12 +105,7 @@ curl http://127.0.0.1:8080/v1/metrics \
 | `AEGIS_BUDGET_BACKEND` | `sqlite` (default) · `memory` · `redis` (`AEGIS_REDIS_URL`) |
 | `X-Aegis-Session` header | Optional agent-run id. Information-flow state is kept per caller and per session. |
 
-Observability (optional containers):
-
-```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose --profile obs up --build
-# Grafana http://localhost:3000  (admin/admin) · Prometheus http://localhost:9090
-```
+Observability ports and the Compose command are listed under [Docker (gateway + observability)](#docker-gateway--observability) above.
 
 Local `aegis serve` does not need a collector. If `OTEL_EXPORTER_OTLP_ENDPOINT` points at `otel-collector` and that host is not running, export is skipped (no retry spam). Unset the variable or restart the process after this change.
 
@@ -192,16 +197,4 @@ async with http, Client(streamable_http_client("http://127.0.0.1:8080/mcp", http
 AEGIS_PROFILE=strict .venv/bin/aegis serve   # or: aegis serve --profile strict · make serve PROFILE=strict
 ```
 
-## Judging criteria alignment
 
-| Criterion | Weight | Evidence | Known limits |
-|---|---|---|---|
-| Robustness & guardrails | 30% | Hybrid regex + LLM judge, System One + HITL, DLP inbound and egress, role AuthZ, information flow, signature feed, loop guard | LLM judge is a small local model; information flow is an OpenAPPA subset |
-| Architecture & performance | 20% | Thin FastAPI gateway, hot reload, per-control latency telemetry, one cached LLM call per request | Single process; the LLM judge adds about 1 s on cache misses |
-| Security reporting | 20% | Dashboard + HITL queue, JSONL/CSV export, Prometheus histograms, Grafana | Metrics are in-memory per replica |
-| Self-testing suite | 15% | Positive and negative per control, HTTP bypass tests, bank MCP, HITL, loop guard | Live-model test runs only when Ollama is present |
-| Implementability & scale | 15% | OpenAI-compatible base URL, Compose, SQLite/Redis budgets | Static API tokens (no IdP/JWT yet) |
-
-## License note
-
-Python / FastAPI / Pydantic / httpx / Microsoft Presidio / spaCy + `en_core_web_sm` are permissive OSS (MIT/BSD/Apache). Gemma 3 is distributed under the Gemma terms of use. No paid LLM is required: `demo-echo` and local Ollama models are enough.
