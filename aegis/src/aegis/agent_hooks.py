@@ -30,7 +30,7 @@ from typing import Any
 from aegis.policy.models import Action, AgentHooksPolicy, Decision, EvaluationResult
 
 # Tools served by the Aegis MCP proxy are already checked there.
-AEGIS_MCP_PREFIX = "mcp__aegis__"
+AEGIS_MCP_PREFIXES = ("mcp__aegis__", "mcp__sachsguard__")
 
 Run = Callable[[str, str, str | None], EvaluationResult]
 Mask = Callable[[Any], Any]
@@ -39,7 +39,7 @@ _ACTING = {Action.BLOCK, Action.HOLD, Action.REDACT, Action.DEGRADE}
 
 
 def _checked(tool: str, patterns: list[str]) -> bool:
-    return not tool.startswith(AEGIS_MCP_PREFIX) and any(fnmatchcase(tool, p) for p in patterns)
+    return not tool.startswith(AEGIS_MCP_PREFIXES) and any(fnmatchcase(tool, p) for p in patterns)
 
 
 def uses_llm_judge(cfg: AgentHooksPolicy, tool_name: str | None) -> bool:
