@@ -15,9 +15,6 @@ HackYeah **AI Control Layer** entry: a Python **modular monolith**. A hybrid gat
 
 ```bash
 cd aegis
-# optional but recommended for the semantic LLM judge — run on the host, not in Compose:
-ollama serve                                          # if not already running as a service
-ollama pull gemma3:270m                               # model named in policies/policy.yaml
 
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose --profile obs up --build
 ```
